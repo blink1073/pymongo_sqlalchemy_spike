@@ -134,6 +134,14 @@ class Connection:
 
 def connect(uri="mongodb://localhost:27017", database=None, catalog=None,
             sample_size=100, **client_kwargs):
-    """Connect to MongoDB and return a PEP-249 Connection."""
+    """Connect to MongoDB and return a PEP-249 Connection.
+
+    Pass a catalog built by mongosql_dbapi.catalog.build_catalog to skip
+    per-connection document sampling; this is the integration point for an
+    externally built schema catalog. The connection snapshots it at the
+    database and collection level only (leaf schema dicts stay shared, and
+    the library replaces rather than mutates them), so later refreshes stay
+    on the connection.
+    """
     return Connection(uri=uri, database=database, catalog=catalog,
                       sample_size=sample_size, **client_kwargs)

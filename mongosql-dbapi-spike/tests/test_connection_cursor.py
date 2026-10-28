@@ -2,7 +2,7 @@
 from datetime import datetime
 
 import pytest
-from conftest import DB
+from conftest import DB, MONGO_URI
 from mongosql_dbapi.exceptions import NotSupportedError, ProgrammingError
 
 
@@ -18,6 +18,47 @@ def test_refresh_catalog_picks_up_new_collections(conn, seeded_client):
     conn.refresh_catalog()
     cur = conn.execute("SELECT x FROM fresh")
     assert cur.fetchall() == [(1,)]
+
+
+def test_injected_catalog_skips_sampling(seeded_client, monkeypatch):
+    # A catalog handed to connect() must be used as-is: sampling per
+    # connection is exactly what injection exists to avoid.
+    import mongosql_dbapi
+    from mongosql_dbapi import connection as connection_module
+    from mongosql_dbapi.catalog import build_catalog
+
+    catalog = build_catalog(seeded_client, DB)
+
+    def _no_sampling(*args, **kwargs):
+        raise AssertionError("sampling ran although a catalog was injected")
+
+    monkeypatch.setattr(connection_module, "build_catalog", _no_sampling)
+
+    conn = mongosql_dbapi.connect(uri=MONGO_URI, database=DB, catalog=catalog)
+    try:
+        cur = conn.execute("SELECT name FROM test WHERE id = 1")
+        assert cur.fetchall() == [("foo",)]
+    finally:
+        conn.close()
+
+
+def test_injected_catalog_updates_stay_on_the_connection(seeded_client):
+    # Contract: refresh_catalog() updates the connection's own catalog and
+    # must not leak new collections into the caller's injected dict.
+    import mongosql_dbapi
+    from mongosql_dbapi.catalog import build_catalog
+
+    catalog = build_catalog(seeded_client, DB)
+    conn = mongosql_dbapi.connect(uri=MONGO_URI, database=DB, catalog=catalog)
+    try:
+        seeded_client[DB]["injected_catalog_fresh"].insert_one({"x": 1})
+        conn.refresh_catalog()
+        assert conn.execute(
+            "SELECT x FROM injected_catalog_fresh").fetchall() == [(1,)]
+        assert "injected_catalog_fresh" not in catalog[DB]
+    finally:
+        seeded_client[DB].drop_collection("injected_catalog_fresh")
+        conn.close()
 
 
 def test_execute_without_database_raises_programming_error(seeded_client):
